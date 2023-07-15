@@ -9,7 +9,6 @@ asio::awaitable<void> network::Listener(tcp::acceptor acceptor) {
 
         auto sock = co_await acceptor.async_accept(asio::use_awaitable);
 
-
         // get connect packet
         co_await sock.async_receive(asio::buffer(pkt, 7), asio::use_awaitable);
 
@@ -19,10 +18,10 @@ asio::awaitable<void> network::Listener(tcp::acceptor acceptor) {
         CreateConnack(pkt);
 
         // send header of connack packet
-        co_await sock.async_send(asio::buffer(pkt, 5), asio::use_awaitable);
+        co_await sock.async_send(asio::buffer(pkt, pkt.size()), asio::use_awaitable);
 
         // send remaining part of connack packet
-        co_await sock.async_send(asio::buffer(pkt.data() + 5, pkt.size() - 5), asio::use_awaitable);
+        //co_await sock.async_send(asio::buffer(pkt.data() + 5, pkt.size() - 5), asio::use_awaitable);
 
         if(is_contact) {
             /*
@@ -66,7 +65,6 @@ asio::awaitable<void> network::Listener(tcp::acceptor acceptor) {
                 information_about::users_.back()->Start();
 
             } else {
-
                 ptr->TransferControl(std::move(sock), std::move(id));
             }
             
@@ -85,12 +83,18 @@ void network::CreateConnack(std::vector<Uchar8_t> &pkt) {
     bool is_find;
     bool is_contact = pkt[0] & 0x0F;
 
+    
+
 
     // Check id in database
     if(pkt[0] & 0x01) {
         is_find = SearchInContactsData(id);
     } else {
         is_find = SearchInUsersData(id);
+    }
+
+    if(id == 0) {
+        is_find = true;
     }
 
     // Preliminary handing of packet
@@ -110,15 +114,18 @@ void network::CreateConnack(std::vector<Uchar8_t> &pkt) {
     
     pkt.resize(5);
 
-    pkt[1] = (size_of_contacts_data >> 24);
-    pkt[2] = (size_of_contacts_data >> 16);
-    pkt[3] = (size_of_contacts_data >> 8);
-    pkt[4] = size_of_contacts_data;
-    
-    size_of_contacts_data /= 2;
+    size_t count_of_free = 0;
 
     // Iterate over the data and add new id in packet
-    for(size_t i = 0; i < size_of_contacts_data; ++i) {
+    for(size_t i = 0; i < size_of_contacts_data / 2; ++i) {
+
+    
+        auto con = (information_about::contacts_.begin() + i)->get();
+
+        if(con->SessionFree()) { 
+            count_of_free += 2;
+            continue; 
+        }
 
         Uchar16_t id = (information_about::contacts_.begin() + i)->get()->GetId();
 
@@ -126,6 +133,13 @@ void network::CreateConnack(std::vector<Uchar8_t> &pkt) {
         pkt.push_back(id);
 
     }
+
+    size_of_contacts_data -= count_of_free;
+
+    pkt[1] = (size_of_contacts_data >> 24);
+    pkt[2] = (size_of_contacts_data >> 16);
+    pkt[3] = (size_of_contacts_data >> 8);
+    pkt[4] = size_of_contacts_data;
 
     pkt.resize(5 + size_of_contacts_data*2);
 }
@@ -199,11 +213,14 @@ std::shared_ptr<UserSession> network::FindUser(const Uchar16_t &id) noexcept {
     return nullptr;
 }
 
-void network::SendToAllUsers(std::vector<Uchar8_t> &pkt) {
+void network::SendToAllUsers(std::vector<Uchar8_t> pkt) {
 
     for(auto& session: information_about::users_) {
-            if(!session->SessionFree())
-                session->AddPacket(pkt);
+
+        if(!session->SessionFree())
+            session->AddPacket(pkt);
+
+        
     }
 
 }

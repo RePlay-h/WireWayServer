@@ -34,7 +34,8 @@ asio::awaitable<void> UserSession::Reader() {
         buf_.resize(5);
         
         // get header of packet
-        co_await sock_.async_receive(asio::buffer(buf_, 5), asio::redirect_error(asio::use_awaitable, ec));
+        co_await asio::async_read(sock_, asio::buffer(buf_, 5), asio::redirect_error(asio::use_awaitable, ec));
+
 
         if(CheckErrorCode(ec, "[" + std::to_string(id_) + "] an error occurred while receiving the package")) {
 
@@ -58,7 +59,7 @@ asio::awaitable<void> UserSession::Reader() {
             buf_.resize(remaining_len + 5);
 
             // get remaining part
-            co_await sock_.async_receive(asio::buffer(buf_.data() + 5, std::move(remaining_len)), asio::redirect_error(asio::use_awaitable, ec));
+            co_await asio::async_read(sock_, asio::buffer(buf_.data() + 5, std::move(remaining_len)), asio::redirect_error(asio::use_awaitable, ec));
 
             if(CheckErrorCode(ec, "[" + std::to_string(id_) + "] an error occurred while receiving the package")) {
 
@@ -74,9 +75,9 @@ asio::awaitable<void> UserSession::Reader() {
         }
 
         if constexpr (PRINT_TYPE_OF_RECEIVED_USER_PACKET) {
-            if((buf_[0] & 0xF0) != SCREEN_BYTE) {
-                Log::Print(INFO, "USER: " + std::to_string(id_) + " get packet: " + ResolvePacketType(buf_[0] & 0xF0), std::cout);
-            }
+            
+            Log::Print(INFO, "USER: " + std::to_string(id_) + " get packet: " + ResolvePacketType(buf_[0] & 0xF0), std::cout);
+
         }
 
         PacketHandler();
@@ -99,18 +100,27 @@ void UserSession::PacketHandler() {
         if(session == nullptr) {
             handlers::InterceptHandler(buf_, false);
         } else {
-            tcp::endpoint endp = session->GetEndpoint();
-            handlers::InterceptHandler(buf_, true, endp.address().to_string());
+
+            std::vector<uint8_t> pkt;
+
+            tcp::endpoint endp1 = session->GetEndpoint();
+
+            handlers::InterceptHandler(buf_, true, endp1.address().to_string());
+
+            handlers::InterceptHandler(pkt, true, sock_.remote_endpoint().address().to_string());
+
+            session->AddPacket(std::move(pkt));
         }
 
-        packets_.push(std::move(buf_));
+        packets_.push(buf_);
+
+        timer_.cancel_one();
 
         break;
     }
 
-    case DISCONNECT_BYTE: {
+    default:
         ClearSession();
-    }
     }
 }
 
@@ -127,7 +137,7 @@ asio::awaitable<void> UserSession::Writer() {
             while(!packets_.empty()) {
                 
                 //send packet
-                co_await sock_.async_send(asio::buffer(packets_.front(), packets_.front().size()), asio::use_awaitable);
+                co_await asio::async_write(sock_, asio::buffer(packets_.front(), packets_.front().size()), asio::use_awaitable);
 
                 if(CheckErrorCode(ec, "[" + std::to_string(id_) + "] an error occurred while sending the package")) {
 
@@ -141,7 +151,9 @@ asio::awaitable<void> UserSession::Writer() {
                 }
 
                 if constexpr (PRINT_TYPE_OF_SENT_USER_PACKET) {
-                    Log::Print(INFO, "USER: " + std::to_string(id_) + " send packet: " + ResolvePacketType(packets_.front()[0] & 0xF0), std::cout);
+                    if(!PRINT_SCREEN_PACKET && ((packets_.front()[0] & 0xF0) != SCREEN_BYTE) || PRINT_SCREEN_PACKET) {
+                        Log::Print(INFO, "USER: " + std::to_string(id_) + " send packet: " + ResolvePacketType(packets_.front()[0] & 0xF0), std::cout);
+                    }
                 }
                 packets_.pop();
             }
@@ -153,6 +165,8 @@ asio::awaitable<void> UserSession::Writer() {
 void UserSession::ClearSession() {
 
     if(sock_.is_open()) {
+
+        Log::Print(INFO, "USER: "+ std::to_string(id_) + ". Clear session", std::cout);
         
         // clear all session variables
 
@@ -165,6 +179,8 @@ void UserSession::ClearSession() {
         sock_.shutdown(asio::socket_base::shutdown_both);
 
         sock_.close();
+
+        id_ = 0;
 
         timer_.cancel();
     }
@@ -181,6 +197,16 @@ void UserSession::ClearSession() {
     // timer initialization 
     timer_.expires_at(std::chrono::steady_clock::time_point::max());
 
+    std::string msg = "Transfer control to a new USER  [ID: ";
+    msg += std::to_string(id_);
+    msg += "] [ADDRESS: ";
+    msg += sock_.remote_endpoint().address().to_string();
+    msg += "] [PORT: ";
+    msg += std::to_string(sock_.remote_endpoint().port());
+    msg += "]";
+
+    Log::Print(INFO, msg, std::cout);
+
     // spawn corotines
     asio::co_spawn(sock_.get_executor(), Reader(), asio::detached);
 
@@ -193,6 +219,7 @@ void UserSession::ClearSession() {
  }
 
 void UserSession::AddPacket(std::vector<Uchar8_t> pkt) {
+    
     packets_.push(std::move(pkt));
     timer_.cancel_one();
 }
@@ -220,4 +247,8 @@ void UserSession::AddPacket(std::vector<Uchar8_t> pkt) {
 
  const Uchar16_t& UserSession::GetId() {
     return id_;
+ }
+
+ tcp::endpoint UserSession::GetEndpoint() {
+    return sock_.remote_endpoint();
  }

@@ -33,7 +33,7 @@ namespace network {
 
     std::shared_ptr<UserSession> FindUser(const Uchar16_t &id) noexcept; // search for a user session with the specified id
 
-    void SendToAllUsers(std::vector<Uchar8_t> &pkt);  // sends the specified packet to all users
+    void SendToAllUsers(std::vector<Uchar8_t> pkt);  // sends the specified packet to all users
 
 } // network
 

@@ -27,6 +27,8 @@ public:
 
     const Uchar16_t& GetId() override;
 
+    tcp::endpoint GetEndpoint();
+
     void AddPacket(std::vector<Uchar8_t> pkt);
 
     bool CheckErrorCode(boost::system::error_code ec, std::string &&msg_); // method throws an error message

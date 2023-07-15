@@ -19,6 +19,8 @@ void handlers::ConnectHandler(std::vector<Uchar8_t> &pkt, bool is_find) {
 
  void handlers::InterceptHandler(std::vector<Uchar8_t> &pkt, bool is_find, std::string address) {
 
+    pkt.resize(5);
+
     size_t address_len = address.size();
 
     pkt[0] = INTERCAPT_BYTE;
@@ -31,10 +33,9 @@ void handlers::ConnectHandler(std::vector<Uchar8_t> &pkt, bool is_find) {
     // If the contact is not found, then add one bit to the beginning
     if(!is_find) {
         pkt[0] |= 0x01;
-        pkt.resize(5);
         return;
     }
-
+    
     address_len += 5;
 
     pkt.resize(address_len);

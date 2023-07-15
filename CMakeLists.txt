@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD 20)
 
 find_package(Boost REQUIRED)
 
+
 add_executable(server 
     main.cpp 
 

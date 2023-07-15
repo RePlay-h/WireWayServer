@@ -28,10 +28,13 @@ asio::awaitable<void> ContactSession::Reader() {
 
     for(;;) {
 
+        
+
         buf_.resize(5);
 
         // get header of packet
-        co_await sock_.async_receive(asio::buffer(buf_, 5), asio::redirect_error(asio::use_awaitable, ec));
+
+        co_await asio::async_read(sock_, asio::buffer(buf_, 5), asio::redirect_error(asio::use_awaitable, ec));
 
         if(CheckErrorCode(ec, "An error occurred while receiving the package")) {
 
@@ -41,7 +44,7 @@ asio::awaitable<void> ContactSession::Reader() {
                 Log::Print(ERROR, ec.what(), std::cout);
             }
 
-            co_return;
+            break;
         }
 
         // size of remaining part
@@ -51,14 +54,24 @@ asio::awaitable<void> ContactSession::Reader() {
         remaining_len |= (buf_[4]);
 
         if constexpr (PRINT_TYPE_OF_RECEIVED_CONTACT_PACKET) {
-            Log::Print(INFO, "CONTACT: " + std::to_string(id_) + " get packet: " + ResolvePacketType(buf_[0] & 0xF0), std::cout);
+
+            if(!PRINT_SCREEN_PACKET && ((buf_[0] & 0xF0) != SCREEN_BYTE) || PRINT_SCREEN_PACKET) {
+                Log::Print(INFO, "CONTACT: " + std::to_string(id_) + " get packet: " + ResolvePacketType(buf_[0] & 0xF0), std::cout);
+            }
+            
+        }
+
+        if(remaining_len > 65530u) {
+            buf_.clear();
+            continue;
         }
 
         if(remaining_len != 0) {
             buf_.resize(remaining_len + 5);
 
             // get remaining packet
-            co_await sock_.async_receive(asio::buffer(buf_.data() + 5, remaining_len), asio::redirect_error(asio::use_awaitable, ec));
+
+            co_await asio::async_read(sock_, asio::buffer(buf_.data() + 5, remaining_len), asio::redirect_error(asio::use_awaitable, ec));
 
             if(CheckErrorCode(ec, "An error occurred while receiving the package")) {
 
@@ -68,21 +81,30 @@ asio::awaitable<void> ContactSession::Reader() {
                     Log::Print(ERROR, ec.what(), std::cout);
                 }
 
-                co_return;
+                break;
             }
 
         }
 
         PacketHandler();
+        buf_.clear();
+        buf_.resize(0);
+
     }
 
 }
 
 void ContactSession::PacketHandler() {
+
     switch (buf_[0] & 0xF0)
     {
     case SCREEN_BYTE:
-        network::SendToAllUsers(buf_);
+        network::SendToAllUsers(std::move(buf_));
+        break;
+
+    default:
+        ClearSession();
+        break;
     }
 }
 
@@ -98,10 +120,12 @@ asio::awaitable<void> ContactSession::Writer() {
         else {
 
             // send packet
-            co_await sock_.async_send(asio::buffer(buf_, buf_.size()), asio::redirect_error(asio::use_awaitable, ec));
 
+            //co_await sock_.async_send(asio::buffer(buf_, buf_.size()), asio::redirect_error(asio::use_awaitable, ec));
 
-            if(CheckErrorCode(ec, "An error occurred while sending the package")) {
+            co_await asio::async_write(sock_, asio::buffer(buf_, buf_.size()), asio::redirect_error(asio::use_awaitable, ec));
+
+            if(CheckErrorCode(ec, "[" + std::to_string(id_) + "] an error occurred while sending the package")) {
 
                 ClearSession();
 
@@ -113,7 +137,7 @@ asio::awaitable<void> ContactSession::Writer() {
             }
 
             if constexpr (PRINT_TYPE_OF_SENT_CONTACT_PACKET) {
-                Log::Print(INFO, "CONTACT: " + std::to_string(id_) + " send packet: "+ ResolvePacketType(buf_[0] & 0xF0), std::cout);
+                Log::Print(INFO, "CONTACT: " + std::to_string(id_) + " send packet: " + ResolvePacketType(buf_[0] & 0xF0), std::cout);
             }
 
             buf_.clear();
@@ -128,6 +152,8 @@ asio::awaitable<void> ContactSession::Writer() {
 
         // clear all session variables
 
+        Log::Print(INFO, "CONTACT: "+ std::to_string(id_) + ". Clear session", std::cout);
+
         buf_.clear();
 
         sock_.shutdown(asio::socket_base::shutdown_both);
@@ -140,7 +166,7 @@ asio::awaitable<void> ContactSession::Writer() {
 
         creators::CreatePublish(pkt, false, id_);
 
-        network::SendToAllUsers(pkt);
+        network::SendToAllUsers(std::move(pkt));
     }
 
  }
@@ -152,6 +178,16 @@ asio::awaitable<void> ContactSession::Writer() {
 
     // set new id
     id_ = std::move(id);
+
+    std::string msg = "Transfer control to a new CONTACT  [ID: ";
+    msg += std::to_string(id_);
+    msg += "] [ADDRESS: ";
+    msg += sock_.remote_endpoint().address().to_string();
+    msg += "] [PORT: ";
+    msg += std::to_string(sock_.remote_endpoint().port());
+    msg += "]";
+
+    Log::Print(INFO, msg, std::cout);
 
     // timer initialization
     timer_.expires_at(std::chrono::steady_clock::time_point::max());
@@ -196,3 +232,10 @@ const Uchar16_t& ContactSession::GetId() {
  const tcp::endpoint ContactSession::GetEndpoint() {
     return sock_.remote_endpoint();
  }
+
+ void ContactSession::AddPacket(std::vector<Uchar8_t> pkt) {
+
+    buf_ = std::move(pkt);
+    timer_.cancel_one();
+
+}

@@ -26,6 +26,8 @@ public:
 
     const Uchar16_t& GetId() override;
 
+    void AddPacket(std::vector<Uchar8_t> pkt);
+
     const tcp::endpoint GetEndpoint(); // return tcp::endpoint from sock_
 
     bool CheckErrorCode(boost::system::error_code ec, std::string &&msg_);
@@ -37,6 +39,8 @@ private:
     std::vector<Uchar8_t> buf_;
     tcp::socket sock_;
     asio::steady_timer timer_;
+
+    std::queue<std::vector<Uchar8_t>> packets_;
 };
 
 #endif
